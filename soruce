@@ -1,0 +1,1030 @@
+Skip to content
+Search or jump to…
+Pull requests
+Issues
+Marketplace
+Explore
+ 
+@Aashi2603 
+timabilov
+/
+python-play3d
+Public
+Code
+Issues
+Pull requests
+1
+Actions
+Projects
+Wiki
+Security
+Insights
+add source & README.md
+ main
+ v0.1.5 
+…
+ v0.1.0
+Tamerlan Abilov committed on Apr 26, 2021 
+1 parent 44d4c22 commit 9986ef32779ca0e90b68027b3350a6108f4c3ed4
+Showing  with 8,541 additions and 2 deletions.
+  1  .gitignore 
+@@ -127,3 +127,4 @@ dmypy.json
+
+# Pyre type checker
+.pyre/
+.idea
+ 327  README.md 
+@@ -1,2 +1,325 @@
+# python-3d-from-zero
+Demonstration of building 3d world, 2d projection from scratch
+3D Playground - on Python from scratch.
+=====================================
+
+![Pygame integration example](example/sm-example.gif)
+
+
+#### TL;DR: Some basic 3D world playground with animations and [camera](#camera-keys-example) completely from scratch(only 2D pixels). 
+This implementation / API only for demonstration and *playground* purposes based on [Perspective projection](https://en.wikipedia.org/wiki/3D_projection#Perspective_projection).     
+Can be used on top of **any** 2d graphics engine/lib(frame buffers, sdl and etc.)
+
+Not implemented features due to low performance:
+* Face clipping not implemented, vertices clipping ignored too    
+* Flat shading and Gouraud shading not implemented.
+* Z-buffering 
+
+`models.Model` API is open demonstration of [MVP](https://stackoverflow.com/questions/5550620/the-purpose-of-model-view-projection-matrix) model and is definitely a good starting point/topic for 3D graphics.
+
+Also you can plot any function on 3D scene.
+
+* [How to use](#how-to-use)
+* [Model View Projection](#model-view-projection)
+  * [Projection](#projection)
+  * [Camera](#world-camera)
+    * [Camera scene example](#camera-keys-example)
+* [Mesh and Wireframe](#mesh-and-wireframe)
+* [Rasterization](#rasterization)
+* [3D Plotting](#3d-plotting) 
+* [Basic Wavefront .obj format support](#obj-format)
+* [Model API](#models-api)
+* [Trajectory API](#trajectory-api)
+* [Pygame Example](#pygame-example)
+
+## How to use
+
+There is only one requirement - to provide 2D pixel and line renderer(drawer)
+
+As current example uses `pygame`:
+```python
+from play3d.three_d import Device
+import pygame
+# our adapter will rely on pygame renderer
+put_pixel = lambda x, y, color: pygame.draw.circle(screen, color, (x, y), 1)
+# we certainly can draw lines ourselves using put_pixel three_d.drawline
+# but implementation below - much faster
+line_adapter = lambda p1, p2, color: pygame.draw.line(screen, color, (p1[x], p1[y]), (p2[x], p2[y]), 1)
+width, height = 1024, 768 # should be same as 2D provider 
+Device.viewport(width, height)
+Device.set_renderer(put_pixel, line_adapter)
+screen = pygame.display.set_mode(Device.get_resolution())
+```
+
+That's all we need for setting up environment. 
+Now we can create and render model objects by calling `Model.draw()` at each frame update (See example)\
+To create model you can simply pass 3D world vertices as 2-d list `Model(data=data)`
+
+It is possible to provide faces as 2d array  `Model(data=data, faces=faces)`. Face index starts from 1.  Only triangles supported. For more information see below.
+
+Simply by providing 3D (or 4D homogeneous where w=1) `data` vertices list - Model transforms this coordinates from 3D world space to projected screen space
+```python
+from play3d.models import Model
+# our 2D library renderer setup.. See above.
+# Cube model. Already built-in `models.Cube`  
+cube = Model(position=(0, 0, 0),
+                 data=[
+                    [-1, 1, 1, 1],
+                    [1, 1, 1, 1],
+                    [-1, -1, 1, 1],
+                    [1, -1, 1, 1],
+                    [-1, 1, -1, 1],
+                    [1, 1, -1, 1],
+                    [1, -1, -1, 1],
+                    [-1, -1, -1, 1]
+                ])
+while True: # your render lib/method
+    cube.draw()
+```
+## Model View Projection
+
+`models.Model` and `three_d.Camera` implements all MVP(See `Model.draw`).
+
+### Projection
+
+Here we use perspective projection matrix\
+Z axis of clipped cube(from frustum) mapped to [-1, 1] and our camera directed to -z axis (OpenGL convention)\
+Projection Matrix can be tuned there (aspect ratio, FOV and etc.) \
+`Camera.near = 1`\
+`Camera.far = 10`\
+`Camera.fov = 60`\
+`Camera.aspect_ratio = 3/4` 
+
+### World camera
+
+By OpenGL standard we basically move our scene.
+Facing direction considered when we move our camera in case of rotations(direction vector will be transformed too)\
+Camera can be moved through `three_d.Camera` API:
+```python
+from play3d.three_d import Camera
+camera = Camera.get_instance()
+# move camera to x, y, z with 0.5 step considering facing direction
+camera['x'] += 0.5
+camera['y'] += 0.5
+camera['z'] += 0.5
+camera.move(0.5, 0.5, 0.5) # identical above
+# rotate camera to our left on XZ plane
+camera.rotate('y', 2) # 
+```
+
+#### Camera keys example
+![Pygame integration example](example/move-around.gif)
+
+## Mesh and Wireframe
+
+To exploit mesh one should provide both `data` and `faces`. Face represents triple group of vertices index referenced from `data`. Face index starts from 1.\
+By default object rendered as wireframe
+```python
+from play3d.models import Model
+triangle = Model(position=(-5, 3, -4),
+                 data=[
+                     [-3, 1, -7, 1],
+                     [-2, 2, -7, 1],
+                     [-1, 0, -7, 1],
+                 ], faces=[[1, 2, 3]])
+```
+
+![Triangle wireframe](https://i.imgur.com/A7ktUd7.png)
+
+
+## Rasterization
+
+By default if data and faces provided, rasterization will be enabled.\
+For rasterization we use - standard slope algorithm with horizontal filling lines. 
+```python
+from play3d.models import Model
+white = (230, 230, 230)
+suzanne = Model.load_OBJ('suzanne.obj.txt', position=(-4, 2, -6), color=white, rasterize=True)
+suzanne_wireframe = Model.load_OBJ('suzanne.obj.txt', position=(-4, 2, -6), color=white)
+suzanne.rotate(0, -14)
+suzanne_wireframe.rotate(0, 14)
+```
+
+![Suzanne wireframe and rasterized](https://i.imgur.com/1vVlLt9.png)
+
+## 3D plotting
+
+You can plot any function you want by providing parametric equation as `func(*parameters) -> [x, y, z]`.
+For example, sphere and some awesome wave both polar and parametric equations(Sphere built-in as `Models.Sphere`):
+```python
+import math
+from play3d.models import Plot
+def fn(phi, theta):
+    return [
+        math.sin(phi * math.pi / 180) * math.cos(theta * math.pi / 180),
+        math.sin(theta * math.pi / 180) * math.sin(phi * math.pi / 180),
+        math.cos(phi * math.pi / 180)
+    ]
+sphere_model = Plot(func=fn, allrange=[0, 360], position=(-4, 2, 1), color=(0, 64, 255))
+blow_your_head = Plot(
+    position=(-4, 2, 1), color=(0, 64, 255),
+    func=lambda x, t: [x, math.cos(x) * math.cos(t), math.cos(t)], allrange=[0, 2*math.pi], interpolate=75
+)
+```
+
+![Plots](https://i.imgur.com/utZexJ5.png)
+
+
+## OBJ format
+
+Wawefront format is widely used as a standard in 3D graphics
+
+You can import your model here. Only vertices and faces supported.\
+`Model.load_OBJ(cls, path, wireframe=False, **all_model_kwargs)`
+
+You can find examples here [github.com/alecjacobson/common-3d-test-models](https://github.com/alecjacobson/common-3d-test-models)
+
+```python
+Model.load_OBJ('beetle.obj.txt', wireframe=True, color=white, position=(-2, 2, -4), scale=3)
+```
+
+
+![Beetle object](https://i.imgur.com/79fy4HK.png)
+
+## Models API
+
+`Models.Model`
+
+| Fields | Description    |
+| ------------- | ------------- |
+| `position`  | `tuple=(0, 0, 0)` with x, y, z world coordinates  |
+| `scale`  | `integer(=1)`  |
+| `color`  | `tuple`  `(255, 255, 255)`   |
+| `data`  | `list[[x, y, z, [w=1]]]` - Model vertices(points)  |
+| `faces`  | `list[[A, B, C]]` - Defines triangles See: [Mesh and Wireframe](#mesh-and-wireframe)  |
+| `rasterize`  | `bool(=True)` - Rasterize - "fill" an object  |
+| `shimmering`  | `bool(=False)` - color flickering/dancing  |
+
+
+
+```python
+# Initial Model Matrix
+model.matrix = Matrix([
+                          [1 * scale, 0, 0, 0],
+                          [0, 1 * scale, 0, 0],
+                          [0, 0, 1 * scale, 0],
+                          [*position, 1]
+                      ])
+```
+
+## Trajectory API
+
+`Models.Trajectory`
+
+| Fields | Description    |
+| ------------- | ------------- |
+| `func`  | `func` Parametrized math function which takes `*args` and returns world respective coordinates `tuple=(x, y, z)`    |
+
+To move our object through defined path we can build Trajectory for our object. 
+You can provide any parametric equation with args.\
+World coordinates defined by `func(*args)` tuple output.  
+
+#### `model_obj @ translate(x, y, z)`
+translates object's model matrix (in world space)
+
+#### `rotate(self, angle_x, angle_y=0, angle_z=0)`
+Rotates object relative to particular axis plane. First object translated from the world space back to local origin, then we rotate the object
+
+#### `route(self, trajectory: 'Trajectory', enable_trace=False)`
+Set the function-based  trajectory routing for the object.
+
+  - trajectory `Trajectory` - trajectory state
+  - enable_trace `bool` - Keep track of i.e. draw trajectory path (breadcrumbs)
+
+#### Example
+```python
+import math
+from play3d.models import Sphere, Trajectory
+white = (230, 230, 230)
+moving_sphere = Sphere(position=(1, 3, -5), color=white, interpolate=50)
+moving_sphere.route(Trajectory.ToAxis.Z(speed=0.02).backwards())
+whirling_sphere = Sphere(position=(1, 3, -5), color=white, interpolate=50)
+# Already built-in as Trajectory.SineXY(speed=0.1)
+whirling_sphere.route(Trajectory(lambda x: [x, math.sin(x)], speed=0.1))
+while True: # inside your "render()"
+    moving_sphere.draw()
+    whirling_sphere.draw()
+```
+## Pygame example
+
+```python
+import logging
+import os
+import sys
+import pygame
+from play3d.models import Model, Grid
+from pygame_utils import handle_camera_with_keys  # your keyboard control management
+from play3d.three_d import Device, Camera
+from play3d.utils import capture_fps
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+os.environ["SDL_VIDEO_CENTERED"] = '1'
+black, white = (20, 20, 20), (230, 230, 230)
+Device.viewport(1024, 768)
+pygame.init()
+screen = pygame.display.set_mode(Device.get_resolution())
+# just for simplicity - array access, we should avoid that
+x, y, z = 0, 1, 2
+# pygame sdl line is faster than default one
+line_adapter = lambda p1, p2, color: pygame.draw.line(screen, color, (p1[x], p1[y]), (p2[x], p2[y]), 1)
+put_pixel = lambda x, y, color: pygame.draw.circle(screen, color, (x, y), 1)
+Device.set_renderer(put_pixel, line_renderer=line_adapter)
+grid = Grid(color=(30, 140, 200), dimensions=(30, 30))
+suzanne = Model.load_OBJ('suzanne.obj.txt', position=(3, 2, -7), color=white, rasterize=True)
+beetle = Model.load_OBJ('beetle.obj.txt', wireframe=False, color=white, position=(0, 2, -11), scale=3)
+beetle.rotate(0, 45, 50)
+camera = Camera.get_instance()
+# move our camera up and back a bit, from origin
+camera.move(y=1, z=2)
+@capture_fps
+def frame():
+    if pygame.event.get(pygame.QUIT):
+        sys.exit(0)
+    screen.fill(black)
+    handle_camera_with_keys()  # we can move our camera
+    grid.draw()
+    beetle.draw()
+    suzanne.rotate(0, 1, 0).draw()
+    pygame.display.flip()
+while True:
+    frame()
+```
+ 0  example/__init__.py 
+Empty file.
+ 4,419  example/beetle.obj.txt 
+Large diffs are not rendered by default.
+
+ 56  example/main.py 
+@@ -0,0 +1,56 @@
+import logging
+import os
+import sys
+
+import pygame
+
+from play3d.models import Model, Grid
+from pygame_utils import handle_camera_with_keys
+from play3d.three_d import Device, Camera
+from play3d.utils import capture_fps
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+
+os.environ["SDL_VIDEO_CENTERED"] = '1'
+black, white = (20, 20, 20), (230, 230, 230)
+
+
+Device.viewport(1024, 768)
+pygame.init()
+screen = pygame.display.set_mode(Device.get_resolution())
+
+# just for simplicity - array access, we should avoid that
+x, y, z = 0, 1, 2
+
+# pygame sdl line is faster than default one
+line_adapter = lambda p1, p2, color: pygame.draw.line(screen, color, (p1[x], p1[y]), (p2[x], p2[y]), 1)
+put_pixel = lambda x, y, color: pygame.draw.circle(screen, color, (x, y), 1)
+
+Device.set_renderer(put_pixel, line_renderer=line_adapter)
+
+grid = Grid(color=(30, 140, 200), dimensions=(30, 30))
+suzanne = Model.load_OBJ('suzanne.obj.txt', position=(3, 2, -7), color=white, rasterize=True)
+beetle = Model.load_OBJ('beetle.obj.txt', wireframe=False, color=white, position=(0, 2, -11), scale=3)
+beetle.rotate(0, 45, 50)
+
+camera = Camera.get_instance()
+# move our camera up and back a bit, from origin
+camera.move(y=1, z=2)
+
+
+@capture_fps
+def frame():
+    if pygame.event.get(pygame.QUIT):
+        sys.exit(0)
+
+    screen.fill(black)
+    handle_camera_with_keys()  # we can move our camera
+    grid.draw()
+    beetle.draw()
+    suzanne.rotate(0, 1, 0).draw()
+    pygame.display.flip()
+
+
+while True:
+
+    frame()
+ BIN +20.3 MB example/move-around.gif 
+
+ 40  example/pygame_utils.py 
+@@ -0,0 +1,40 @@
+import pygame
+
+from play3d.three_d import Camera
+
+base_step = 0.3
+
+
+def handle_camera_with_keys():
+    keys = pygame.key.get_pressed()
+
+    camera_position = Camera.get_instance()
+    if keys[pygame.K_UP]:
+        camera_position['y'] += base_step
+
+    if keys[pygame.K_DOWN]:
+        camera_position['y'] -= base_step
+
+    if keys[ord('w')]:
+        camera_position['z'] -= base_step
+
+    if keys[ord('s')]:
+        camera_position['z'] += base_step
+
+    if keys[ord('d')]:
+        camera_position['x'] += base_step
+
+    if keys[ord('a')]:
+        camera_position['x'] -= base_step
+
+    if keys[ord('q')]:
+        camera_position.rotate('y', -2)
+
+    if keys[ord('e')]:
+        camera_position.rotate('y', 2)
+
+    if keys[ord('r')]:
+        camera_position.rotate('x', 2)
+
+    if keys[ord('t')]:
+        camera_position.rotate('x', -2)
+ BIN +3.02 MB example/sm-example.gif 
+
+ 2,580  example/suzanne.obj.txt 
+Large diffs are not rendered by default.
+
+ 0  play3d/__init__.py 
+Empty file.
+ 89  play3d/matrix.py 
+@@ -0,0 +1,89 @@
+from numbers import Number
+from typing import Type
+
+import numpy as np
+
+
+class Matrix:
+
+    @classmethod
+    def identity_matrix(cls):
+
+        return cls(
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ]
+        )
+
+    def __init__(self, array_of_array):
+
+        if isinstance(array_of_array, Matrix):
+
+            array_of_array = array_of_array.matrix
+
+        self.matrix = np.array([np.array(line, dtype='float32') for line in array_of_array], dtype='float32')
+
+    def __matmul__(self, other: Type['Matrix']):
+        """
+        Matrix multiplication
+        :param other:
+        :return:
+        """
+        if not isinstance(other, Matrix):
+            raise Exception('Matrix can be multiplied(@) to matrix only!')
+
+        return Matrix(matmul(self.matrix, other.matrix))
+
+    def __getitem__(self, item):
+
+        return self.matrix[item]
+
+    def __setitem__(self, key, value):
+        if not isinstance(value, Number):
+            raise Exception(f'Matrix elements can be only a numbers! Given {value}')
+
+        self.matrix[key] = value
+
+    def __len__(self):
+        return len(self.matrix)
+
+    def __mul__(self, other):
+        """
+        Plain multiplication by number
+        :param other:
+        :return:
+        """
+        return np.multiply(self.matrix, other)
+
+    def transpose(self):
+        matrix = self.matrix
+        return Matrix([
+            [matrix[j][i] for j in range(len(matrix))]
+            for i in range(len(matrix[0]))
+        ])
+
+    def __add__(self, other):
+        new_matrix = Matrix(self.matrix.copy())
+        for i in range(len(self.matrix)):
+            for j in range(len(self.matrix[i])):
+                new_matrix.matrix[i][j] += other[i][j]
+
+        return new_matrix
+
+    def __str__(self):
+        return str(self.matrix)
+
+
+def matmul(matrix1, matrix2):
+    """
+    :param matrix1:
+    :param matrix2:
+    :return:
+    """
+
+    multiplied = np.matmul(matrix1, matrix2)
+
+    return multiplied
+ 566  play3d/models.py 
+Large diffs are not rendered by default.
+
+ 397  play3d/three_d.py 
+@@ -0,0 +1,397 @@
+import math
+import logging
+import numpy
+
+from .matrix import Matrix
+
+from .utils import log_this
+
+log = logging.getLogger(__name__)
+
+# just for simplicity
+x = 0
+y = 1
+z = 2
+w = 3
+
+
+class Device:
+    _width, _height = None, None
+
+    _renderer = None
+    _line_render = None
+
+    @classmethod
+    def set_renderer(cls, pixel_renderer, line_renderer=None):
+        """
+        Main renderer for our world. Usually framebuffer put pixel method is enough
+        for pixel_renderer(x, y, color)
+        But optionally line renderer can be set from your 2D library.
+        Otherwise line is drawn with the help of pixel_renderer which is slow.
+        :param renderer:
+        :return:
+        """
+        cls._renderer = pixel_renderer
+
+        cls._line_render = line_renderer if line_renderer else drawline
+        if cls._line_render == drawline:
+            log.warning(' <<<< Mapped default drawline renderer using pixel_renderer under the hood  >>> ')
+
+    @classmethod
+    def put_pixel(cls, x, y, color):
+
+        if 0 < x < cls._width and 0 < y < cls._height:
+            cls._renderer(x, y, color)
+
+    @classmethod
+    def drawline(cls, p1, p2, color):
+        return cls._line_render(p1, p2, color)
+
+    @classmethod
+    def viewport(cls, x, y):
+        cls._width = x
+        cls._height = y
+
+    @classmethod
+    def get_resolution(cls):
+        return cls._width, cls._height
+
+
+def linemidpoint(p1, p2, near):
+
+    t = (p1[w] - near)/(p1[w] - p2[w] + 0.001)
+    if abs(t) < 0.001:
+        return p1, 0
+
+    xc = (t*p1[x]) + ((1-t) * p2[x])
+    yc = (t*p1[y]) + ((1-t) * p2[y])
+    zc = (t*p1[z]) + ((1-t) * p2[z])
+    wc = near
+    return [xc, yc, zc, wc], t
+
+
+def drawline(p1, p2, color):
+
+    x0, y0 = int(p1[x]), int(p1[y])
+    x1, y1 = int(p2[x]), int(p2[y])
+    dx, dy = abs(x1 - x0), abs(y1 - y0)
+
+    sx = 1 if (x0 < x1) else - 1
+    sy = 1 if (y0 < y1) else - 1
+
+    err = dx - dy
+    count = 0
+    while True:
+        Device.put_pixel(x0, y0, color)
+        if (x0 == x1) and (y0 == y1):
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x0 += sx
+        if e2 < dx:
+            err += dx
+            y0 += sy
+        count += 1
+
+
+def drawline2(p1, p2, color):
+
+    x0, y0 = p1[x], p1[y]
+    x1, y1 = p2[x], p2[y]
+    dx, dy = abs(x1 - x0), abs(y1 - y0)
+
+    sx = 1 if (x0 < x1) else - 1
+
+    slope = dy / (dx + 0.01)
+    _y = y0
+    if sx == 1:
+        for _x in range(x0, x1):
+            Device.put_pixel(_x, _y, color)
+            if (x0 == x1) and (y0 == y1):
+                break
+            _y = _y + slope
+    else:
+
+        for _x in range(x1, x0):
+            Device.put_pixel(_x, _y, color)
+            if (x0 == x1) and (y0 == y1):
+                break
+            _y = _y - slope
+
+
+def PROJECTION_MATRIX(fov, aspect_ratio, near, far):
+    fov = 1 / (math.tan((fov/2) * math.pi / 180))
+    return Matrix(
+        [
+            [fov/aspect_ratio,     0,            0,                0],
+            [0,                  fov,            0,                0],
+            [0,                    0, -(far + near)/(far - near), -1],
+            [0,                    0,   -2*near*far/(far-near),    0]
+        ]
+    )
+
+
+def translate(x, y, z, inverse=False):
+
+    if inverse:
+        x, y, z = -x, -y, -z
+
+    return Matrix(
+       [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [x, y, z, 1]
+       ]
+    )
+
+
+def rotate_over_z(angle):
+
+    rad = math.pi*angle/180
+    return Matrix([
+        [math.cos(rad), math.sin(rad), 0, 0],
+        [-math.sin(rad),  math.cos(rad), 0, 0],
+        [0,  0,  1, 0],
+        [0,  0,  0, 1],
+    ]
+)
+
+
+def rotate_over_y(angle):
+
+    rad = math.pi*angle/180
+    return Matrix([
+        [math.cos(rad), 0, -math.sin(rad), 0],
+        [0,  1, 0, 0],
+        [math.sin(rad),  0,  math.cos(rad), 0],
+        [0, 0, 0, 1],
+    ]
+)
+
+
+def rotate_over_x(angle):
+    rad = math.pi*angle/180
+    return Matrix([
+        [1, 0, 0, 0],
+        [0,  math.cos(rad), math.sin(rad), 0],
+        [0,  -math.sin(rad),  math.cos(rad), 0],
+        [0, 0, 0, 1],
+
+    ]
+)
+
+
+def _negative_list(l):
+
+    return [-x for x in l]
+
+
+def inverse_camera_view(camera_position, camera_angle):
+    """
+    Camera actually transforms the world (inverted translate and inverted rotate)
+    """
+    # rotate inverted = transpose
+    # translation inversion = sign change
+    # inverse of a product is reverse product of inverse
+    return translate(*_negative_list(camera_position)) @ (rotate_over_y(camera_angle[1]) @ rotate_over_x(camera_angle[0]))
+
+
+@log_this('Recalculate camera..')
+def ViewProjectionMatrix(cam_position, cam_angles, fov, aspect_ratio, near, far):
+    return inverse_camera_view(cam_position, cam_angles) @ PROJECTION_MATRIX(fov, aspect_ratio, near, far)
+
+
+# easy way to handle camera axis
+axis_str_mapping = {
+    'x': 0,
+    'y': 1,
+    'z': 2
+}
+
+
+class Camera:
+    _camera = None
+    _camera_position = numpy.array([0, 0, 0, 1], dtype='float32')
+    _camera_angles = numpy.array([0, 0, 0])
+    _facing_axis = Matrix.identity_matrix()
+    near = 1
+    far = 10
+    fov = 60
+
+    aspect_ratio = 4 / 3
+    _VPMatrix = ViewProjectionMatrix(_camera_position, _camera_angles, fov, aspect_ratio, near, far)
+
+    @classmethod
+    def get_instance(cls):
+        if not cls._camera:
+            cls._camera = Camera()
+        return cls._camera
+
+    @classmethod
+    def View_Projection_matrix(cls):
+        return cls._VPMatrix
+
+    def __getitem__(self, item):
+        return self.__class__._camera_position[axis_str_mapping[item]]
+
+    def rotate(self, axis, angle):
+        if axis == 'y':
+            self._facing_axis = rotate_over_y(-angle) @ self._facing_axis
+
+        self._camera_angles[axis_str_mapping[axis]] += angle
+        # axis_camera_position = Matrix(self._camera_position) @ self._facing_axis
+        self.__class__._VPMatrix = ViewProjectionMatrix(self._camera_position[:-1],
+                                                        self.__class__._camera_angles,
+                                                        self.__class__.fov, self.__class__.aspect_ratio,
+                                                        self.__class__.near, self.__class__.far)
+
+    def move(self, x=0, y=0, z=0):  # TODO Trajectory implement
+        cls = self.__class__
+
+        # create direction vector with filled axis value as step.
+        # 'y' += 0.3 -> dir_vector = [0, 0.3, 0, 0].
+
+        dir_vector = Matrix([x, y, z, 0])
+
+        # then we transform/rotate this vector to consider facing direction
+        facing_dir_vector = (Matrix(dir_vector) @ self._facing_axis).matrix
+
+        cls._camera_position += facing_dir_vector
+
+        cls._VPMatrix = ViewProjectionMatrix(cls._camera_position[:-1],
+                                             self.__class__._camera_angles,
+                                             self.__class__.fov, self.__class__.aspect_ratio, self.__class__.near,
+                                             self.__class__.far)
+
+    def __setitem__(self, key, value):
+        """
+        API for camera_obj['axis'] += float_step.
+        Facing direction(vector) considered, i.e. we move forward relative to rotated angle.
+        :param key:
+        :param value:
+        :return:
+        """
+        # there is no simple method for class attribute subscription
+        cls = self.__class__
+
+        # create direction vector with filled axis value as step.
+        # 'y' += 0.3 -> dir_vector = [0, 0.3, 0, 0].
+
+        dir_vector = Matrix([0, 0, 0, 0])
+        # because mainly we use it as += increment value is the result of operation is *not* step itself
+        # step = value - old_value
+        dir_vector[axis_str_mapping[key]] = value - self._camera_position[axis_str_mapping[key]]
+
+        # then we transform/rotate this vector to consider facing direction
+        facing_dir_vector = (Matrix(dir_vector) @ self._facing_axis).matrix
+
+        cls._camera_position += facing_dir_vector
+
+        cls._VPMatrix = ViewProjectionMatrix(cls._camera_position[:-1],
+                                             self.__class__._camera_angles,
+                                             self.__class__.fov, self.__class__.aspect_ratio, self.__class__.near,
+                                             self.__class__.far)
+
+
+def get_model_position(model: Matrix):
+
+    return model[3][0], model[3][1], model[3][2]
+
+
+# we can join this two bottom and top triangle methods
+def _raster_bottom_flat_triangle(v1, v2, v3, color):
+    # step down from left side (slope) of triangle
+    left_slope = (v2[x] - v1[x])/(v2[y] - v1[y] + 0.01)
+    # step down from left side (slope) of triangle
+    right_slope = (v3[x] - v1[x])/(v3[y] - v1[y] + 0.01 )
+
+    leftx = int(v1[x])
+    rightx = int(v1[x])
+
+    # as we go down by 'dy=1' step  - draw line on each 'y' by +m/slope level
+    for y_val in range(v1[y], v2[y], 1):
+        Device.drawline((int(leftx), y_val), (int(rightx), y_val), color)
+
+        leftx += left_slope
+        rightx += right_slope
+
+
+def _raster_top_flat_triangle(v1, v2, v3, color):
+    # step up from left side (slope) of triangle
+    left_slope = (v3[x] - v1[x])/(v3[y] - v1[y] + 0.01)
+    # # step up from left side (slope) of triangle
+    right_slope = (v3[x] - v2[x])/(v3[y] - v2[y] + 0.01)
+
+    leftx = v3[x]
+    rightx = v3[x]
+    # as we go up by 'dy=-1' step  - draw line on each 'y' level by -m/slope
+    for val_y in range(v3[y], v1[y], -1):
+
+        Device.drawline((int(leftx), val_y), (int(rightx), val_y), color)
+
+        leftx -= left_slope
+        rightx -= right_slope
+
+
+def fill_triangle(v1, v2, v3, color):
+
+    # sort by y to consider v1 as topmost vertice ( scan line from down)
+    # optimize calculation int64 > int
+    v1, v2, v3 = sorted([v1.tolist(), v2.tolist(), v3.tolist()], key=lambda k: k[1])
+
+    if v2[y] == v3[y]:
+        _raster_bottom_flat_triangle(v1, v2, v3, color)
+        pass
+    elif v1[y] == v2[y]:
+        _raster_top_flat_triangle(v1, v2, v3, color)
+
+    else:
+        # split for two flat triangles -  bottom flat then top flat, find intersection y
+
+        mid_v = [int((v1[x] + (v2[y] - v1[y])/(v3[y] - v1[y]) * (v3[x] - v1[x]))), v2[y], 0, 1]
+        Device.drawline((v2[x], v2[y]), (mid_v[x], mid_v[y]), color)
+
+        # we can generalize this two methods if we want
+        _raster_bottom_flat_triangle(v1, v2, mid_v, color)
+
+        _raster_top_flat_triangle(v2, mid_v, v3, color)
+
+
+def rotate_model(model, angleX, angleY, angleZ):
+    position = get_model_position(model)
+    model_origin = model @ (translate(*position, True))
+
+    if angleY:
+        model_origin = rotate_over_y(angleY) @ model_origin
+    if angleX:
+        model_origin = rotate_over_x(angleX) @ model_origin
+    if angleZ:
+        model_origin = rotate_over_z(angleZ) @ model_origin
+
+    moved_back = model_origin @ (translate(*position))
+
+    return moved_back
+
+
+def point_diff(p1, p2):
+
+    return p2[x] - p1[x], p2[y] - p1[y], p2[z] - p1[z]
+
+
+def dotted_line(p1, p2, precision=150):
+    line_data = []
+    connection = p1, p2
+
+    difference = point_diff(connection[0], connection[1])
+
+    count = precision
+
+    dfx, dfy, dfz = difference[x] / (count + 1), difference[y] / (count + 1), difference[z] / (count + 1)
+    for step in range(count + 1):
+        line_data.append(
+            [round(p1[x] + dfx * step, 5), round(p1[y] + dfy * step, 5), round(p1[z] + dfz * step, 5), 1]
+        )
+
+    return line_data
+ 64  play3d/utils.py 
+@@ -0,0 +1,64 @@
+import functools
+import os
+import time
+from functools import wraps
+import logging
+
+log = logging.getLogger(__name__)
+
+
+def logtime(fn, *args, **kwargs):
+    message = kwargs.pop('message', None)
+    if not message:
+        message = str(fn)
+    t = time.time()
+    r = fn(*args, **kwargs)
+    td = time.time() - t  # 0.004 ms
+    if 1e6 * td > 0.1:
+        log.debug(" %s.%s %s %0.6f seconds",
+                  os.path.basename(fn.__code__.co_filename).split('.')[0],
+                  fn.__name__, message, td)
+
+    return r
+
+
+def log_this(message=None, *targs):
+
+    def decorator(fn):
+
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            args_log = ' ('
+            nonlocal targs
+            if not targs:
+                targs = [str] * len(args)
+
+            for arg_fn, arg in zip(targs, args):
+                args_log += str(arg_fn(arg)) + ','
+            args_log += ')'
+
+            return logtime(fn, *args, **kwargs, message=(message or '') + args_log)
+
+        return wrapper
+    return decorator
+
+
+def _get_fps(last_frame_time):
+
+    delta = time.time() - last_frame_time
+
+    return round(1/delta, 2)
+
+
+def capture_fps(fn):
+
+    @functools.wraps(fn)
+    def wrapper():
+        start_time = time.time()
+        fn()
+
+        log.info(' %s.%s() %s FPS',
+                 os.path.basename(fn.__code__.co_filename).split('.')[0],
+                 wrapper.__name__, _get_fps(start_time))
+
+    return wrapper 
+ 2  requirements.txt 
+@@ -0,0 +1,2 @@
+numpy
+pygame==2.0.1
+ 2  setup.cfg 
+@@ -0,0 +1,2 @@
+[metadata]
+description-file = README.md 
+ 0  setup.py 
+Empty file.
+0 comments on commit 9986ef3
+@Aashi2603
+ 
+ 
+Leave a comment
+No file chosen
+Attach files by dragging & dropping, selecting or pasting them.
+ You’re not receiving notifications from this thread.
+© 2022 GitHub, Inc.
+Terms
+Privacy
+Security
+Status
+Docs
+Contact GitHub
+Pricing
+API
+Training
+Blog
+About
